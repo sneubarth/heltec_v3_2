@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Adafruit_SHT31.h>
 
 #define CS_PIN 8
 #define DIO1_PIN 14
@@ -14,15 +15,18 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_ADDRESS 0x3C  // Confirmed SSD1306 I2C address
+#define SHT31_ADDRESS 0x44  // SHT31 I2C address
 
 SPIClass customSPI(HSPI);
 Module mod(CS_PIN, DIO1_PIN, RST_PIN, BUSY_PIN, customSPI);
 SX1262 radio(&mod);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET_PIN);
+Adafruit_SHT31 sht31 = Adafruit_SHT31();
 
 volatile bool transmittedFlag = false;
 uint32_t packetCount = 0;  // Counter for transmitted packets
 bool oledInitialized = false;  // Flag for OLED initialization
+bool sht31Initialized = false;  // Flag for SHT31 initialization
 
 void setFlag() {
     transmittedFlag = true;
@@ -86,6 +90,14 @@ void setup() {
         Serial.println("OLED initialization failed at address 0x3C");
     }
 
+    // Initialize SHT31
+    if (sht31.begin(SHT31_ADDRESS)) {
+        sht31Initialized = true;
+        Serial.println("SHT31 initialized successfully at address 0x44");
+    } else {
+        Serial.println("SHT31 initialization failed at address 0x44");
+    }
+
     // Initialize SPI and LoRa
     customSPI.begin(9, 11, 10);
     radio.setTCXO(1.6);
@@ -108,21 +120,43 @@ void loop() {
     const unsigned long transmitInterval = 1000;  // Transmit every 1 second
 
     if (millis() - lastTransmitTime >= transmitInterval) {
-        String packet = "hello";
+        // Prepare message
+        char packet[33];  // 32 chars + null terminator
+        float temperatureF = 0.0;
+        float humidity = 0.0;
+        if (sht31Initialized) {
+            float cTemp = sht31.readTemperature();
+            if (!isnan(cTemp)) {
+                temperatureF = cTemp * 9.0 / 5.0 + 32.0;  // Convert to °F
+                humidity = sht31.readHumidity();
+                snprintf(packet, sizeof(packet), "packet %03lu, T:%5.1f F, H:%02.0f %%", packetCount + 1, temperatureF, humidity);
+                Serial.print("Temperature: ");
+                Serial.print(temperatureF, 1);
+                Serial.println(" F");
+                Serial.print("Humidity: ");
+                Serial.print(humidity, 0);
+                Serial.println(" %");
+            } else {
+                Serial.println("Failed to read SHT31 temperature");
+                snprintf(packet, sizeof(packet), "packet %03lu, T:---.- F, H:-- %%", packetCount + 1);
+            }
+        } else {
+            snprintf(packet, sizeof(packet), "packet %03lu, T:---.- F, H:-- %%", packetCount + 1);
+        }
+
+        // Transmit packet
         transmittedFlag = false;
-        int state = radio.transmit((uint8_t*)packet.c_str(), packet.length());
+        int state = radio.transmit((uint8_t*)packet, 32);  // Fixed length 32
 
         if (state == RADIOLIB_ERR_NONE && transmittedFlag) {
             packetCount++;  // Increment counter
             unsigned long currentTime = millis();
             Serial.print("Transmitted packet at ");
             Serial.print(currentTime);
-            Serial.print(" ms, len=");
-            Serial.print(packet.length());
-            Serial.print(": ");
+            Serial.print(" ms, len=32: ");
             Serial.print(packet);
             Serial.print(" [Hex: ");
-            for (size_t i = 0; i < packet.length(); i++) {
+            for (size_t i = 0; i < 32; i++) {
                 if (packet[i] < 16) Serial.print("0");
                 Serial.print(packet[i], HEX);
                 Serial.print(" ");
@@ -141,6 +175,16 @@ void loop() {
                 display.setCursor(0, 10);
                 display.print("packet: ");
                 display.println(packetCount);
+                if (sht31Initialized && !isnan(temperatureF)) {
+                    display.setCursor(10, 30);  // Indent for readability
+                    display.print("T: ");
+                    display.print(temperatureF, 1);
+                    display.println(" F");
+                    display.setCursor(10, 40);
+                    display.print("H: ");
+                    display.print(humidity, 0);
+                    display.println(" %");
+                }
                 display.display();
             }
         } else if (state != RADIOLIB_ERR_NONE) {
