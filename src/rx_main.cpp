@@ -2,6 +2,7 @@
 #include <RadioLib.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
+#include "sx1262.h"
 #include <Adafruit_SSD1306.h>
 
 #define CS_PIN 8
@@ -76,16 +77,10 @@ void setup() {
         oledInitialized = true;
         Serial.println("OLED initialized at 0x3C");
         display.clearDisplay();
-        display.setTextSize(1);
+        display.setTextSize(3);
         display.setTextColor(SSD1306_WHITE);
-        display.setCursor(0, 0);
-        display.println("LoRa RX");
-        display.setCursor(0, 8);
-        display.println("RSSI: Waiting...");
-        display.setCursor(0, 16);
-        display.println("SNR: Waiting...");
-        display.setCursor(0, 24);
-        display.println("packet: 0");
+        display.setCursor(3, 32);
+        display.println("Wait...");
         display.display();
         Serial.println("OLED splash displayed");
     } else {
@@ -96,17 +91,17 @@ void setup() {
     // Initialize SPI and LoRa
     customSPI.begin(9, 11, 10);
     radio.setTCXO(1.6);
-    int state = radio.begin(915.0);
+    int state = radio.begin(RADIO_FREQUENCY);
     if (state != RADIOLIB_ERR_NONE) {
         Serial.print("LoRa init failed, code: ");
         Serial.println(state);
         while (true);
     }
-    radio.setBandwidth(125.0);
-    radio.setSpreadingFactor(8);
-    radio.setCodingRate(5);
-    radio.setSyncWord(0x12);
-    radio.setPreambleLength(16);
+    radio.setBandwidth(RADIO_BANDWIDTH);
+    radio.setSpreadingFactor(RADIO_SPREADING_FACTOR);
+    radio.setCodingRate(RADIO_CODING_RATE);
+    radio.setSyncWord(RADIO_SYNC_WORD);
+    radio.setPreambleLength(RADIO_PREAMBLE_LENGTH);
     radio.explicitHeader();
     radio.setCRC(true);
 
@@ -124,13 +119,12 @@ void loop() {
         uint8_t buffer[64] = {0};
         int state = radio.readData(buffer, 32);
 
+        radio.startReceive();   // back to rx next pkt
+
         if (state == RADIOLIB_ERR_NONE) {
             validPacketCount++;
             unsigned long currentTime = millis();
             unsigned long elapsed = currentTime - lastPacketTime;
-            if (elapsed > 1500 && lastPacketTime > 0) {
-                missedPacketCount += (elapsed / 1236);
-            }
 
             // Convert buffer to string
             String packet = "";
@@ -153,7 +147,7 @@ void loop() {
             Serial.println();
 
             // Extract display string
-            String displayStr = packet.substring(13, 30); // "T: 70.0 F, H:57 %"
+            String displayStr = packet.substring(14, 31);
 
             // Debug display string
             Serial.print("displayStr: [");
@@ -188,29 +182,24 @@ void loop() {
             Serial.println("]");
             Serial.print("Valid packets received: ");
             Serial.println(validPacketCount);
-            Serial.print("Estimated missed packets: ");
-            Serial.println(missedPacketCount);
 
             // Update OLED
             if (oledInitialized) {
                 display.clearDisplay();
-                display.setTextSize(1);
+                display.setTextSize(2);
                 display.setTextColor(SSD1306_WHITE);
                 display.setCursor(0, 0);
-                display.println("LoRa RX");
-                display.setCursor(0, 8);
-                display.print("RSSI: ");
-                display.print((int)radio.getRSSI());
-                display.println(" dBm");
-                display.setCursor(0, 16);
-                display.print("SNR: ");
-                display.print(radio.getSNR(), 1);
-                display.println(" dB");
-                display.setCursor(0, 24);
-                display.print("packet: ");
+                display.print("PKT:");
                 display.println(validPacketCount);
-                display.setCursor(10, 40);
-                display.println(displayStr); // "T: 70.0 F, H:57 %"
+                display.setCursor(0, 18);
+                display.print("RSSI: ");
+                display.println((int)radio.getRSSI());
+                display.setCursor(0, 34);
+                display.print("SNR:  ");
+                display.print(radio.getSNR(), 1);
+                display.setCursor(10, 54);
+                display.setTextSize(1);
+                display.println(displayStr); // "T:70.3,H:56%"
                 display.display();
                 Serial.println("OLED updated");
             } else {
@@ -221,12 +210,20 @@ void loop() {
         } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
             Serial.println("CRC mismatch");
             missedPacketCount++;
+            if (oledInitialized) {
+                display.clearDisplay();
+                display.setTextSize(2);
+                display.setTextColor(SSD1306_WHITE);
+                display.setCursor(0, 18);
+                display.print("BAD CRC");
+            }
+ 
         } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
             Serial.print("Error, code: ");
             Serial.println(state);
             missedPacketCount++;
         }
 
-        radio.startReceive();
+        // radio.startReceive();
     }
 }

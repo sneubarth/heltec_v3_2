@@ -2,6 +2,7 @@
 #include <RadioLib.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
+#include "sx1262.h"
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_SHT31.h>
 
@@ -101,12 +102,12 @@ void setup() {
     // Initialize SPI and LoRa
     customSPI.begin(9, 11, 10);
     radio.setTCXO(1.6);
-    radio.begin(915.0);
-    radio.setBandwidth(125.0);
-    radio.setSpreadingFactor(8);
-    radio.setCodingRate(5);
-    radio.setSyncWord(0x12);
-    radio.setPreambleLength(16);
+    radio.begin(RADIO_FREQUENCY);
+    radio.setBandwidth(RADIO_BANDWIDTH);
+    radio.setSpreadingFactor(RADIO_SPREADING_FACTOR);
+    radio.setCodingRate(RADIO_CODING_RATE);
+    radio.setSyncWord(RADIO_SYNC_WORD);
+    radio.setPreambleLength(RADIO_PREAMBLE_LENGTH);
     radio.explicitHeader();
     radio.setCRC(true);
 
@@ -117,7 +118,7 @@ void setup() {
 
 void loop() {
     static unsigned long lastTransmitTime = 0;
-    const unsigned long transmitInterval = 1000;  // Transmit every 1 second
+    const unsigned long transmitInterval = 5000;  // Transmit every 5 second
 
     if (millis() - lastTransmitTime >= transmitInterval) {
         // Prepare message
